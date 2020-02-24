@@ -1,0 +1,1192 @@
+---
+title: "reality-check"
+output:
+  word_document:
+    toc: yes
+  html_notebook:
+    code_folding: hide
+    number_sections: yes
+    self-contained: no
+    theme: cerulean
+    toc: yes
+    toc_float:
+      collapsed: no
+  html_document:
+    toc: yes
+---
+<style type="text/css">
+body{ /* Normal  */
+      font-size: 14px}
+td {  /* Table  */
+      font-size: 12px}
+h1.title {
+      font-size: 30px}
+h1 { /* Header 1 */
+     font-size: 24px}
+h2 { /* Header 2 */
+     font-size: 22px}
+code.r{ /* Code block */
+     font-size: 12px}
+</style>
+
+
+reality check is an experiment testing the effects of divided attention on semantically-induced memory distortions.
+
+***
+# Task Design
+
+120 items studied during encoding (60 pictures 60 words)
+160 test items, presented auditorily 
+Participants respond high/low confidence for old/new question
+For 'old' reports, then asked to respond high/low confidence for source (picture or word)
+
+```{r}
+# Format Data
+# Load and format data
+library(dplyr)
+library(knitr)
+library(ggplot2)
+library(ggpubr)
+library(psych)
+
+se <- function(x) sqrt(var(x)/length(x))  #function to calculate SE
+
+########### Read in each subject's encoding data: #########
+encodingFiles = list.files('/Users/maria/Google Drive/MemoLab/Data Archive/2018_REALITY-CHECK/data', full.names = TRUE, pattern='_reality_check_[0-9].*.csv', recursive = TRUE)
+encodingData_full = do.call(rbind, lapply(encodingFiles, function(x) { read.csv(x, header = TRUE)} ))
+
+### get rid of break response rows ###
+encodingData_full = encodingData_full[encodingData_full$testItem != '',]
+
+NSubjs = length(encodingFiles)
+
+
+########## tidy ##########
+envars <- names(encodingData_full) %in% c('picturePath','wordPath','itemPath', 'cuePath', 'tonePath','FA.thisRepN',
+                                          'FA.thisN', 'DA.thisRepN', 'DA.thisN',
+                                          'welcome_resp.keys',	'welcome_resp.rt','block_break_resp.rt','block_break_resp.keys',
+                                          'date', 'expName','frameRate','X','part1_response_text_FA.keys',
+                                          'part1_response_text_FA.rt', 'part1_resp_DA.rt')
+encodingData <- encodingData_full[!envars]
+
+##### meaninfully populate DA #####
+encodingData$DA = 'blank'
+i = 0
+for (t in encodingData$tone) {
+  i = i + 1
+  if (t != "") {
+    encodingData$DA[i] = 'DA'
+  } else {
+    encodingData$DA[i] = 'FA'
+  }
+}
+
+###### make it a factor #######
+encodingData$DA <- as.factor(encodingData$DA)
+
+
+########### Read in each subject's retrieval data: #########
+retrievalFiles = list.files('/Users/maria/Google Drive/MemoLab/Data Archive/2018_REALITY-CHECK/data', full.names = TRUE, pattern='_reality_check_ret.*.csv', recursive = TRUE)
+retData_full  = do.call(rbind, lapply(retrievalFiles, function(x) { read.csv(x, header = TRUE)} ))
+
+### get rid of break response rows ###
+retData_full <- retData_full[is.na(retData_full$trials.thisN) == FALSE,]
+
+########## tidy ###########
+retvars <- names(retData_full) %in% c('X','picturePath', 'wordPath', 'itemPath', 'cuePath',
+                                      'trials.thisRepN', 'trials.thisN', 'tonePath', 'trials.thisIndex',
+                                      'welcome_resp.keys','welcome_resp.rt', 'break_resp.keys', 
+                                      'break_resp.rt', 'date', 'expName', 'frameRate')
+retData <- retData_full[!retvars]
+
+########### recognition performance ########## 
+retData$OldNewAccuracy[retData$OldNew == 'Old' & (retData$old_new_resp.keys == 1 | retData$old_new_resp.keys == 2)] = 1 #hit
+retData$OldNewAccuracy[retData$OldNew == 'Old' & (retData$old_new_resp.keys == 3 | retData$old_new_resp.keys == 4)] = 0 #miss
+retData$OldNewAccuracy[retData$OldNew == 'New' & (retData$old_new_resp.keys == 1 | retData$old_new_resp.keys == 2)] = 0 #false alarm
+retData$OldNewAccuracy[retData$OldNew == 'New' & (retData$old_new_resp.keys == 3 | retData$old_new_resp.keys == 4)] = 1 #correct rejection
+
+### % no Old/New response ####
+retData$OldNewNull[is.na(retData$OldNewAccuracy)] = 1
+retData$OldNewNull[(retData$OldNewAccuracy == 0) | retData$OldNewAccuracy == 1] = 0
+
+########### source performance ###########
+retData$PictureWord <- as.factor(retData$PictureWord)
+retData$PictureWordAccuracy[retData$PictureWord == 'Picture' & (retData$pw_resp.keys == 1 | retData$pw_resp.keys == 2)] = 1 #hit
+retData$PictureWordAccuracy[retData$PictureWord == 'Picture' & (retData$pw_resp.keys == 3 | retData$pw_resp.keys == 4)] = 0 #miss: WP confusion
+retData$PictureWordAccuracy[retData$PictureWord == 'Word' & (retData$pw_resp.keys == 1 | retData$pw_resp.keys == 2)] = 0 #miss: PW confusion
+retData$PictureWordAccuracy[retData$PictureWord == 'Word' & (retData$pw_resp.keys == 3 | retData$pw_resp.keys == 4)] = 1 #hit
+
+
+########### Tone change accuracy ##########
+library(stringi)
+encodingData$ToneChangeAccuracy[encodingData$DA == 'DA' & grepl('6', encodingData$part1_resp_DA.keys) == TRUE] = 1
+encodingData$ToneChangeAccuracy[encodingData$DA == 'DA' & grepl('6', encodingData$part1_resp_DA.keys) == FALSE] = 0
+
+############ Confidence ##################
+# old/new
+retData$OldNewConfidence[retData$old_new_resp.keys == '1' | retData$old_new_resp.keys == '4'] = 1
+retData$OldNewConfidence[retData$old_new_resp.keys == '2' | retData$old_new_resp.keys == '3'] = 0
+# source
+retData$SourceConfidence[retData$pw_resp.keys == '2' | retData$pw_resp.keys == '3'] = 0
+retData$SourceConfidence[retData$pw_resp.keys == '1' | retData$pw_resp.keys == '4'] = 1
+#retData$SourceConfidence <- as.factor(retData$SourceConfidence)
+
+### subset of retdata
+retData_old = subset(retData, OldNew == 'Old')
+retData_new = subset(retData, OldNew == 'New')
+
+### merge old data and encoding:
+allData <- merge(encodingData, retData_old, by = c("testItem", "participant", "OldNew", "PictureWord"))
+
+```
+***
+# Accuracy
+## Recognition Hits
+Proportion of old items recognized, by picture/word and attention
+```{r, fig.width=3.5,fig.height=3}
+
+hits <- allData %>% 
+            group_by(participant, PictureWord, DA) %>%
+            summarise(PropCorrect = mean(OldNewAccuracy, na.rm = TRUE))
+
+### print exact values:
+hitsMean <- hits %>%
+               group_by(PictureWord, DA) %>%
+               summarise(Correct = mean(PropCorrect), SE = se(PropCorrect))
+print(kable(hitsMean, caption='Recognition memory accuracy (Hits)'))
+
+p <- ggplot(hits, aes(x=DA, y=PropCorrect,fill=PictureWord,color = PictureWord)) +
+     geom_point(position = position_dodge(1), size = 1) +
+     stat_summary(fun.y = mean, geom = 'bar', alpha = 0.4, position = position_dodge(1)) +
+     stat_summary(fun.data = mean_se, geom = "errorbar", fun.args = list(mult = 1.96),
+                 width = 0.2, color = "black", size = 0.3, position = position_dodge(1)) +
+     scale_colour_manual(values = c('#66c2a5', '#8da0cb')) +
+     scale_fill_manual(values =  c('#66c2a5', '#8da0cb')) +
+     ggtitle("Recognition Accuracy") +
+     labs(x = 'Attention') +
+     labs(fill='Stimulus Type') +
+     labs(color = 'Stimulus Type') +
+     labs(y = 'Proportion Correct') +
+     theme_minimal() +
+     theme(axis.line = element_line(colour = "black"), text = element_text('Arial', size = 10), legend.position = 'none')
+
+          #plot.title = element_text(hjust = 0, size=14), ,
+          #axis.text = element_text(size = 14), axis.title = element_text(size = 14), 
+          #legend.text = element_text(size=10),
+          #, text = element_text(family="Helvetica"))
+
+plot(p)
+ggsave("rec_accuracy.png", width=3, height=3, dpi=500)
+library(ez)
+ezANOVA(hits, dv=PropCorrect, wid=participant, within=.(DA, PictureWord))
+
+```
+***
+## Source Accuracy
+```{r, fig.width=3.5,fig.height=3}
+sourceData <- subset(allData, OldNewAccuracy == 1)
+sourcevars <- names(sourceData) %in% c('DA.thisTrialN', 'DA.thisIndex', 'FA.thisTrialN', 'FA.thisIndex', 'inputTextDA', 'part1_resp_DA.keys', 'tone', 'inputTextFA', 'trials.thisTrialN', 'old_new_resp.rt', 'pw_resp.rt', 'OldNewNull','ToneChangeAccuracy')
+sourceData <- sourceData[!sourcevars]
+
+source_hits <- sourceData %>% 
+            group_by(participant, PictureWord, DA) %>%
+            summarise(PropCorrect = mean(PictureWordAccuracy, na.rm = TRUE))
+
+### print exact values:
+source_hitsMean <- source_hits %>%
+               group_by(PictureWord, DA) %>%
+               summarise(Correct = mean(PropCorrect), SE = se(PropCorrect),
+                         Upper = mean(PropCorrect) + 3*sd(PropCorrect), Lower = mean(PropCorrect) - 3*sd(PropCorrect))
+print(kable(source_hitsMean, caption='Source memory accuracy (Hits)'))
+
+### add SD thresholds for plot to flag any possible outliers:
+upper <- rep(source_hitsMean$Upper,1,NSubjs*nrow(source_hitsMean))
+lower <- rep(source_hitsMean$Lower,1,NSubjs*nrow(source_hitsMean))
+source_hits$Upper <- upper
+source_hits$Lower <- lower
+
+p <- ggplot(source_hits, aes(x=DA, y=PropCorrect, color=PictureWord, fill=PictureWord)) +
+    geom_point(position = position_dodge(1), size = 1) +
+    stat_summary(fun.y = mean, geom="bar", alpha = 0.4, position = position_dodge(1)) +
+    stat_summary(fun.data = mean_se, geom = "errorbar", fun.args = list(mult = 1.96),
+                width = 0.2, color = "black", size = 0.3, position = position_dodge(1)) +
+     scale_colour_manual(values = c('#66c2a5', '#8da0cb')) +
+     scale_fill_manual(values =  c('#66c2a5', '#8da0cb')) +
+    ggtitle("Source Accuracy") +
+    labs(x = 'Attention') +
+    labs(fill='Stimulus Type') +
+    labs(color = 'Stimulus Type') +
+    labs(y = 'Proportion Correct') +
+     theme_minimal() +
+     theme(axis.line = element_line(colour = "black"), text = element_text('Arial', size = 10), legend.position = 'none')
+    
+plot(p)
+ggsave("source_accuracy.png", width=3, height=3, dpi=500)
+library(ez)
+ezANOVA(source_hits, dv=PropCorrect, wid=participant, within=.(DA, PictureWord))
+
+
+```
+***
+# Accuracy-Independent Confidence
+## Recognition
+Proportion of recognized items with a high conf response
+```{r, fig.width=6,fig.height=4}
+
+###### Recognition-independent Confidence #######
+rec_conf <- allData %>%
+              group_by(participant, DA, PictureWord) %>%
+              summarise(PropHigh = mean(OldNewConfidence, na.rm = TRUE))
+
+## print exact values: 
+rec_confMean <- rec_conf %>%
+                    group_by(DA, PictureWord) %>%
+                    summarise(confidence = mean(PropHigh), SE = se(PropHigh))
+print(kable(rec_confMean, caption='Recognition Confidence'))
+
+## plot
+p <- ggplot(rec_conf, aes(x=DA, y=PropHigh, color=PictureWord, fill=PictureWord)) +
+    geom_point(position = position_dodge(1), size = 1) +
+    stat_summary(fun.y = mean, geom="bar", alpha = 0.4, position = position_dodge(1)) +
+    stat_summary(fun.data = mean_se, geom = "errorbar", fun.args = list(mult = 1.96),
+        width = 0.2, color = "black", size = 0.3, position = position_dodge(1)) +
+   scale_colour_manual(values = c('#66c2a5', '#8da0cb')) +
+    scale_fill_manual(values =  c('#66c2a5', '#8da0cb')) +
+    ggtitle("Recognition Confidence") +
+    labs(x = 'Attention') +
+    labs(y = 'Accuracy-Independent Confidence') +
+    theme_minimal() + 
+    theme(axis.line = element_line(colour = "black"), legend.position = 'none', text = element_text('Arial', size = 10))
+
+plot(p)
+ggsave("recognition_confidence.png", width=3, height=3, dpi=500)
+
+ezANOVA(rec_conf, dv=PropHigh, wid = participant, within = .(DA, PictureWord))
+
+```
+## Source
+```{r, fig.width=3.5,fig.height=3}
+#### Source Confidence ##### 
+source_conf <- sourceData %>%
+               group_by(participant, DA, PictureWord) %>%
+               summarise(PropHigh = mean(SourceConfidence, na.rm = TRUE))
+            
+## print exact values: 
+source_confMean <-  source_conf %>%
+                    group_by(DA, PictureWord) %>%
+                    summarise(confidence = mean(PropHigh), SE = se(PropHigh))
+print(kable(source_confMean, caption='Accuracy-independent Source Confidence'))
+
+## plot
+p <- ggplot(source_conf, aes(x=DA, y=PropHigh, color=PictureWord, fill=PictureWord)) +
+    geom_point(position = position_dodge(1), size = 1) +
+    stat_summary(fun.y = mean, geom="bar", alpha = 0.4, position = position_dodge(1)) +
+    stat_summary(fun.data = mean_se, geom = "errorbar", fun.args = list(mult = 1.96),
+                width = 0.2, color = "black", size = 0.3, position = position_dodge(1)) +
+     scale_colour_manual(values = c('#66c2a5', '#8da0cb')) +
+     scale_fill_manual(values =  c('#66c2a5', '#8da0cb')) +
+    ggtitle("Source Confidence") +
+    labs(x = 'Attention') +
+    labs(fill='Stimulus Type') +
+    labs(color = 'Stimulus Type') +
+    labs(y = 'Accuracy-Independent Confidence') +
+    theme_minimal()+
+    theme(axis.line = element_line(colour = "black"), legend.position = 'none', text = element_text('Arial', size = 10))
+
+plot(p)
+ggsave("source_confidence.png", width=3, height=3, dpi=500)
+
+## print exact values: 
+source_confMean <- source_conf %>%
+               group_by(DA, PictureWord) %>%
+               summarise(accuracy = mean(PropHigh), SE = se(PropHigh),
+                         Upper = mean(PropHigh) + 3*sd(PropHigh), Lower = mean(PropHigh) - 3*sd(PropHigh))
+print(kable(source_confMean, caption='Source Confidence'))
+library(ez)
+
+ezANOVA(source_conf, dv = PropHigh, wid = participant, within = .(DA, PictureWord))
+```
+***
+# Metamemory
+## Recognition by attention
+```{r, fig.width=5,fig.height=3}
+
+metamemory_rec_full <- allData %>% 
+               group_by(participant, DA) %>%
+               summarise(MetaMemory = fisherz(cor(as.numeric(OldNewAccuracy), as.numeric(OldNewConfidence), use="complete.obs")))
+
+#### remove any subject with NA
+subjects_remove = c('15', '19', '22', '32', '41', '44','45', '46', '47','53','54', '56', '57')
+metamemory_rec <- metamemory_rec_full[!(metamemory_rec_full$participant %in% subjects_remove),]
+
+### print exact values:
+meta_recMean <- metamemory_rec %>%
+               group_by(DA) %>%
+               summarise(Correct = fisherz2r(mean(MetaMemory)), SE = se(MetaMemory))
+print(kable(meta_recMean, caption='Recognition metamemory scores'))
+
+p <- ggplot(metamemory_rec, aes(x=DA, y=MetaMemory, color=factor(DA, labels=c("Divided","Full")), 
+                                fill=factor(DA, labels=c("Divided","Full")))) +
+   geom_point(position = position_dodge(1), size = 1) +
+    stat_summary(fun.y = mean, geom="bar", alpha = 0.4, position = position_dodge(1)) +
+    stat_summary(fun.data = mean_se, geom = "errorbar", fun.args = list(mult = 1.96),
+                width = 0.2, color = "black", size = 0.3, position = position_dodge(1)) +
+     scale_colour_manual(values = c('#fc8d59', '#e9a3c9')) +
+     scale_fill_manual(values =  c('#fc8d59', '#e9a3c9')) +
+     ggtitle("Recognition Metamemory by Attention") +
+     labs(x = 'Attention') +
+     labs(fill='Attention') +
+     labs(color = 'Attention') +
+     theme_minimal() +
+     theme(axis.line = element_line(colour = "black"), text = element_text('Arial', size = 10),
+           legend.position = 'none') 
+
+plot(p)
+ggsave("rec_metamemory_attn.png", width=3.5, height=3, dpi=500)
+
+#### t.test
+t.test(MetaMemory ~ DA, data = metamemory_rec, alternative = 'two.sided', paired = TRUE)
+```
+
+## Recognition by stimulus type
+```{r, fig.width=5,fig.height=3}
+#################################### facet by stimulus type ###################################
+metamemory_rec_pw <- allData %>% 
+               group_by(participant, PictureWord) %>%
+               summarise(MetaMemory = fisherz(cor(as.numeric(OldNewAccuracy), as.numeric(OldNewConfidence), use="complete.obs")))
+
+#### remove any subject with NA -- should be 8
+subjects_remove = c('15', '19', '22', '27','32', '33', '41','45', '46', '47','54', '56', '57')
+metamemory_rec_pw <- metamemory_rec_pw[!(metamemory_rec_pw$participant %in% subjects_remove),]
+
+### print exact values:
+meta_pwMean <- metamemory_rec_pw %>%
+               group_by(PictureWord) %>%
+               summarise(Correct = fisherz2r(mean(MetaMemory)), SE = se(MetaMemory))
+print(kable(meta_pwMean, caption='Recognition metamemory scores'))
+
+p <- ggplot(metamemory_rec_pw, aes(x=PictureWord, y=MetaMemory, color=PictureWord, fill=PictureWord)) +
+      geom_point(position = position_dodge(1), size = 1) +
+    stat_summary(fun.y = mean, geom="bar", alpha = 0.4, position = position_dodge(1)) +
+    stat_summary(fun.data = mean_se, geom = "errorbar", fun.args = list(mult = 1.96),
+               width = 0.2, color = "black", size = 0.3, position = position_dodge(1)) +
+     scale_colour_manual(values = c('#66c2a5', '#8da0cb')) +
+     scale_fill_manual(values =  c('#66c2a5', '#8da0cb')) +
+     ggtitle("Recognition Metamemory by Stimulus") +
+     labs(x = 'Stimulus Type') +
+     labs(color = 'Stimulus Type') +
+     theme_minimal() +
+     theme(axis.line = element_line(colour = "black"),legend.position = 'none', text = element_text('Arial', size = 10))
+
+plot(p)
+ggsave("rec_metamemory_stim.png", width=3.5, height=3, dpi=500)
+
+#### t.test
+t.test(MetaMemory ~ PictureWord, data = metamemory_rec_pw, alternative = 'two.sided', paired = TRUE)
+```
+***
+
+## Source by attention
+```{r, fig.width=5,fig.height=3}
+
+metamemory_full <- sourceData %>% 
+               group_by(participant, DA) %>%
+               summarise(MetaMemory = fisherz(cor(as.numeric(PictureWordAccuracy), as.numeric(SourceConfidence), use="complete.obs")))
+
+#### remove any subject with NA -- should be 8
+subjects_remove = c('15', '19', '27', '32', '45', '46','53', '54')
+metamemory <- metamemory_full[!(metamemory_full$participant %in% subjects_remove),]
+
+### print exact values:
+metaMean <- metamemory %>%
+               group_by(DA) %>%
+               summarise(Correct = fisherz2r(mean(MetaMemory)), SE = se(MetaMemory))
+print(kable(metaMean, caption='Source metamemory scores'))
+
+p <- ggplot(metamemory, aes(x=DA, y=MetaMemory, color=DA, fill=DA)) +
+     geom_point(position = position_dodge(1), size = 1) +
+    stat_summary(fun.y = mean, geom="bar", alpha = 0.4, position = position_dodge(1)) +
+    stat_summary(fun.data = mean_se, geom = "errorbar", fun.args = list(mult = 1.96),
+                 width = 0.2, color = "black", size = 0.3, position = position_dodge(1)) +
+     scale_colour_manual(values = c('#fc8d62', '#e9a3c9')) +
+     scale_fill_manual(values =  c('#fc8d62', '#e9a3c9')) +
+     ggtitle("Source Metamemory by Attention") +
+     labs(x = 'Attention') +
+     theme_minimal() +
+     theme(axis.line = element_line(colour = "black"),legend.position = 'none', text = element_text('Arial', size = 10))
+
+plot(p)
+ggsave("source_metamemory_attn.png", width=3.5, height=3, dpi=500)
+
+#### t.test
+t.test(MetaMemory ~ DA, data = metamemory, alternative = 'two.sided', paired = TRUE)
+```
+
+# Source by stimulus type
+```{r, fig.width=5,fig.height=3}
+
+############################## facet by picture / word ############################
+metamemory_pw <- sourceData %>% 
+               group_by(participant, PictureWord) %>%
+               summarise(MetaMemory = fisherz(cor(as.numeric(PictureWordAccuracy), as.numeric(SourceConfidence), use="complete.obs")))
+
+#### remove any subject with NA -- should be 8
+subjects_remove = c('14', '15', '19', '23', '27', '32', '33', '41','42','43','45', '46','47','53','54', '57')
+metamemory_pw <- metamemory_pw[!(metamemory_pw$participant %in% subjects_remove),]
+
+### print exact values:
+metaMean <- metamemory_pw %>%
+               group_by(PictureWord) %>%
+               summarise(Correct = fisherz2r(mean(MetaMemory)), SE = se(MetaMemory))
+print(kable(metaMean, caption='Source metamemory scores'))
+
+p <- ggplot(metamemory_pw, aes(x=PictureWord, y=MetaMemory, color=PictureWord, fill=PictureWord)) +
+     geom_point(position = position_dodge(1), size = 1) +
+    stat_summary(fun.y = mean, geom="bar", alpha = 0.4, position = position_dodge(1)) +
+    stat_summary(fun.data = mean_se, geom = "errorbar", fun.args = list(mult = 1.96),
+                 width = 0.2, color = "black", size = 0.3, position = position_dodge(1)) +
+     scale_colour_manual(values = c('#66c2a5', '#8da0cb')) +
+     scale_fill_manual(values =  c('#66c2a5', '#8da0cb')) +
+     ggtitle("Source Metamemory by Stimulus") +
+     labs(x = 'Stimulus Type') +
+     theme_minimal() +
+     theme(axis.line = element_line(colour = "black"),legend.position = 'none', text = element_text('Arial', size = 10))
+
+plot(p)
+ggsave("source_metamemory_stim.png", width=3.5, height=3, dpi=500)
+#### t.test
+t.test(MetaMemory ~ PictureWord, data = metamemory_pw, alternative = 'two.sided', paired = TRUE)
+
+```
+***
+# Self-Reports
+``` {r}
+## Scoring questionnaires
+# import csv
+mmq_full <- read.csv('/Users/maria/Desktop/Thesis/MMQ Questionnaire.csv', stringsAsFactors=FALSE)
+feelings <- mmq_full[,1:16]
+mistakes <- mmq_full[,17:33]
+strategies <- mmq_full[,34:52]
+mistakes$participant <- feelings$participant
+mistakes <- mistakes[-1,]
+strategies$participant <- feelings$participant
+strategies <- strategies[-1,]
+
+### FEELINGS ###
+### FORWARD SCORING ###
+forward <- c('Q1','Q3','Q5','Q8','Q10','Q11')
+for (q in forward) {
+  i = 0
+  for (f in feelings[,q]) {
+    i = i+1
+    if (f == 'Strongly Agree') {
+      feelings[i,q] <- 4
+  } else if (f == 'Agree') {
+      feelings[i,q] <- 3
+  } else if (f == 'Undecided') {
+      feelings[i,q] <- 2
+  } else if (f == 'Disagree') {
+      feelings[i,q] <- 1
+  } else if (f == 'Strongly Disagree') {
+      feelings[i,q] <- 0
+    }
+  }
+}
+
+### REVERSE ###
+reverse <- c('Q2', 'Q4','Q6','Q7','Q9','Q12','Q13','Q14','Q15')
+for (q in reverse) {
+  i = 0
+  for (f in feelings[,q]) {
+    i = i+1
+    if (f == 'Strongly Disagree') {
+      feelings[i,q] <- 4
+  } else if (f == 'Disagree') {
+      feelings[i,q] <- 3
+  } else if (f == 'Undecided') {
+      feelings[i,q] <- 2
+  } else if (f == 'Agree') {
+      feelings[i,q] <- 1
+  } else if (f == 'Strongly Agree') {
+      feelings[i,q] <- 0
+    }
+  }
+}
+
+# calculate feeling score 
+feelings <- feelings[-1,]
+feelings <- as.data.frame(lapply(feelings, as.numeric))
+feelings$feelingsScore <- rowSums(feelings[2:16])
+
+## MISTAKES ##
+j <- c(1:17)
+for (k in j) {
+  i = 0
+  for (m in mistakes[,k]) {
+    i = i + 1
+    if (m == 'All the time') {
+      mistakes[i,k] <- 0
+  } else if (m == 'Often') {
+      mistakes[i,k] <- 1
+  } else if (m == 'Sometimes') {
+      mistakes[i,k] <- 2
+  } else if (m == 'Rarely') {
+      mistakes[i,k] <- 3
+  } else if (m == 'Never') {
+      mistakes[i,k] <- 4
+  }
+ }
+}
+
+# calculate mistakes score 
+mistakes <- as.data.frame(lapply(mistakes, as.numeric))
+mistakes$mistakesScore <- rowSums(mistakes[1:17])
+
+## STRATEGIES ##
+j <- c(1:19)
+for (k in j) {
+  i = 0
+  for (s in strategies[,k]) {
+    i = i + 1
+    if (s == 'All the time') {
+      strategies[i,k] <- 4
+  } else if (s == 'Often') {
+      strategies[i,k] <- 3
+  } else if (s == 'Sometimes') {
+      strategies[i,k] <- 2
+  } else if (s == 'Rarely') {
+      strategies[i,k] <- 1
+  } else if (s == 'Never') {
+      strategies[i,k] <- 0
+  }
+ }
+}
+
+# calculate strategies score 
+strategies <- as.data.frame(lapply(strategies, as.numeric))
+strategies$strategiesScore <- rowSums(strategies[1:19])
+
+# summary stats
+mmq <- left_join(feelings, mistakes, by = 'participant')
+mmq <- left_join(mmq, strategies, by = 'participant')
+```
+***
+### MMQ and Recognition Accuracy 
+```{r, fig.width=5,fig.height=3}
+# all
+feelings_rec_performance <- allData %>%
+                        group_by(participant) %>%
+                        summarise(PropCorrect = mean(OldNewAccuracy, na.rm = TRUE))
+feelings_rec_performance <- cbind(feelings_rec_performance, feelings$feelingsScore)
+
+p <- ggscatter(feelings_rec_performance, x = 'PropCorrect', y = 'feelings$feelingsScore', add = 'reg.line',
+          conf.int = TRUE, cor.coef = TRUE, cor.method = 'pearson', 
+          size = 1,
+          xlab = 'Recognition Accuracy (PropCorrect)', ylab = 'Metamemory Self-Report (MMQ Score)',
+          title = 'Metamemory and Recognition Performance') 
+
+ggpar(p, font.family = 'Helvetica', font.main = 10, font.x = 10, font.y = 10)
+
+ggsave("mmq_rec_accuracy.png", width=4, height=4, dpi=500)
+
+# rec_source_by_attn <- subset(allData, (is.na(OldNewAccuracy) == FALSE)) %>%
+#                             group_by(participant, DA) %>%
+#                             summarise(PropRecCorrect = mean(OldNewAccuracy), PropSourceCorrect = mean(PictureWordAccuracy, na.rm = TRUE))
+# # facet by DA
+# frp_conf <- feelings_rec_performance[rep(1:nrow(feelings_rec_performance), each=2),]
+# frp_conf <- frp_conf[,-2]
+# frp_conf <- bind_cols(frp_conf, rec_source_by_attn)
+# frp_conf <- frp_conf[,-3]
+# frpDA <- subset(frp_conf, DA == 'DA')
+# frpFA <- subset(frp_conf, DA == 'FA')
+# 
+# p1 <- ggscatter(frpFA, x = 'PropRecCorrect', y = 'feelings$feelingsScore', add = 'reg.line',
+#           conf.int = TRUE, cor.coef = TRUE, cor.method = 'pearson', facet.by = 'DA',
+#           xlab = 'Recognition Accuracy (PropCorrect)', ylab = 'Metamemory Self-Report (feeling about memory)',
+#           title = 'Metamemory and Recognition Performance (full attention)') 
+# 
+# p2 <- ggscatter(frpDA, x = 'PropRecCorrect', y = 'feelings$feelingsScore', add = 'reg.line',
+#           conf.int = TRUE, cor.coef = TRUE, cor.method = 'pearson', facet.by = 'DA',
+#           xlab = 'Recognition Accuracy (PropCorrect)', ylab = 'Metamemory Self-Report (feeling about memory)',
+#           title = 'Metamemory and Recognition Performance (divided attention)') 
+#   
+# ggarrange(p1,p2,ncol=2,nrow=1)
+
+
+```
+***
+### MMQ and Source Accuracy
+```{r, fig.width=5,fig.height=3}
+# all 
+feelings_source_performance <- sourceData %>%
+                            group_by(participant) %>%
+                            summarise(PropCorrect = mean(PictureWordAccuracy, na.rm = TRUE))
+feelings_source_performance <- cbind(feelings_source_performance, feelings$feelingsScore)
+colnames(feelings_source_performance)[3] <- 'feelingsScore'
+
+p <- ggscatter(feelings_source_performance, x = 'PropCorrect', y = 'feelingsScore', add = 'reg.line',
+          conf.int = TRUE, cor.coef = TRUE, cor.method = 'pearson', size = 1, 
+          xlab = 'Source Accuracy (PropCorrect)', ylab = 'Metamemory Self-Report (MMQ score)',
+          title = 'Metamemory and Source Performance') 
+
+ggpar(p, font.family = 'Helvetica', font.main = 10, font.x = 10, font.y = 10)
+
+ggsave("mmq_source_accuracy.png", width=4, height=4, dpi=500)
+
+# # facet by DA
+# fsp_conf <- feelings_source_performance[rep(1:nrow(feelings_source_performance), each=2),]
+# fsp_conf <- fsp_conf[,-2]
+# fsp_conf <- bind_cols(fsp_conf, rec_source_by_attn)
+# fsp_conf <- fsp_conf[,-3]
+# fspDA <- subset(fsp_conf, DA == 'DA')
+# fspFA <- subset(fsp_conf, DA == 'FA')
+# 
+# p1 <- ggscatter(fspFA, x = 'PropSourceCorrect', y = 'feelingsScore', add = 'reg.line',
+#           conf.int = TRUE, cor.coef = TRUE, cor.method = 'pearson',
+#           xlab = 'Source Accuracy (PropCorrect)', ylab = 'Metamemory Self-Report (feeling about memory)',
+#           title = 'Full Attention') 
+# 
+# p2 <- ggscatter(fspDA, x = 'PropSourceCorrect', y = 'feelingsScore', add = 'reg.line',
+#           conf.int = TRUE, cor.coef = TRUE, cor.method = 'pearson', 
+#           xlab = 'Source Accuracy (PropCorrect)', ylab = 'Metamemory Self-Report (feeling about memory)',
+#           title = 'Divided Attention') 
+#   
+# ggarrange(p1,p2,ncol=2,nrow=1)
+
+```
+***
+## MMQ & Recognition Confidence
+```{r, fig.width=5,fig.height=3}
+# all
+feelings_conf_all <- rec_conf %>%
+                 group_by(participant) %>%
+                 summarise(PropHigh = mean(PropHigh)) %>%
+                 cbind(feelings$feelingsScore)
+
+p <- ggscatter(feelings_conf_all, x = 'PropHigh', y =  'feelings$feelingsScore', add = 'reg.line',
+          conf.int = TRUE, cor.coef = TRUE, cor.method = 'pearson', size = 1,
+          xlab = 'Recognition Confidence (PropHigh)', 
+          ylab =  'Metamemory Self-Report (MMQ score)',
+          title = 'Metamemory and Recognition Confidence') 
+
+ggpar(p, font.family = 'Helvetica', font.main = 10, font.x = 10, font.y = 10)
+
+ggsave("mmq_rec_conf.png", width=4, height=4, dpi=500)
+
+# # facet by DA
+# feelings_conf <- rec_conf %>%
+#                  group_by(participant, DA) %>%
+#                  summarise(PropHigh = mean(PropHigh))
+# 
+# feelings_c <- feelings[rep(1:nrow(feelings), each=2),]
+# 
+# feelings_conf <- bind_cols(feelings_conf, feelings_c)
+# 
+# feelings_confDA <- subset(feelings_conf, DA == 'DA')
+# feelings_confFA <- subset(feelings_conf, DA == 'FA')
+# 
+# p1 <- ggscatter(feelings_confFA, x = 'PropHigh', y = 'feelingsScore', add = 'reg.line',
+#           conf.int = TRUE, cor.coef = TRUE, cor.method = 'pearson',
+#           xlab = 'Prop High Confidence Response', 
+#           ylab = 'Metamemory Self-Report (feeling about memory)',
+#           title = 'Full attention') 
+# 
+# p2 <- ggscatter(feelings_confDA, x = 'PropHigh', y = 'feelingsScore', add = 'reg.line',
+#           conf.int = TRUE, cor.coef = TRUE, cor.method = 'pearson', 
+#           xlab = 'Prop High Confidence Response', 
+#           ylab = 'Metamemory Self-Report (feeling about memory)',
+#           title = 'Divided attention') 
+#   
+# ggarrange(p1,p2,ncol=2,nrow=1)
+
+```
+*** 
+## MMQ & Source Confidence
+```{r, fig.width=5,fig.height=3}
+# all
+feelings_source_all <- source_conf %>%
+                 group_by(participant) %>%
+                 summarise(PropHigh = mean(PropHigh)) %>%
+                 cbind(feelings$feelingsScore)
+
+p <- ggscatter(feelings_source_all, x = 'PropHigh', y =  'feelings$feelingsScore', add = 'reg.line',
+          conf.int = TRUE, cor.coef = TRUE, cor.method = 'pearson', size = 1, 
+          xlab = 'Source Confidence (PropHigh)', 
+          ylab =  'Metamemory Self-Report (MMQ score)',
+          title = 'Metamemory and Source Confidence') 
+ggpar(p, font.family = 'Helvetica', font.main = 10, font.x = 10, font.y = 10)
+
+ggsave("mmq_source_conf.png", width=4, height=4, dpi=500)
+
+# # facet by DA
+# feelings_source_attn <- source_conf %>%
+#                  group_by(participant, DA) %>%
+#                  summarise(PropHigh = mean(PropHigh))
+# feelings_source_attn <- bind_cols(feelings_source_attn, feelings_c)
+# 
+# feelings_source_DA <- subset(feelings_source_attn, DA == 'DA')
+# feelings_source_FA <- subset(feelings_source_attn, DA == 'FA')
+# 
+# p1 <- ggscatter(feelings_source_FA, x = 'PropHigh', y = 'feelingsScore', add = 'reg.line',
+#           conf.int = TRUE, cor.coef = TRUE, cor.method = 'pearson',
+#           xlab = 'Prop High Confidence Response', 
+#           ylab = 'Metamemory Self-Report (feeling about memory)',
+#           title = 'Full attention') 
+# 
+# p2 <- ggscatter(feelings_source_DA, x = 'PropHigh', y = 'feelingsScore', add = 'reg.line',
+#           conf.int = TRUE, cor.coef = TRUE, cor.method = 'pearson', 
+#           xlab = 'Prop High Confidence Response', 
+#           ylab = 'Metamemory Self-Report (feeling about memory)',
+#           title = 'Divided attention') 
+#   
+# ggarrange(p1,p2,ncol=2,nrow=1)
+
+```
+
+## MMQ & Recognition Metamemory (by attention)
+```{r, fig.width=5,fig.height=3}
+# collapsing across attn
+subjects_remove = c('15', '19', '22', '32', '41', '44','45', '46', '47','53','54', '56', '57')
+feelings_rec_metamem_attn <- feelings_c[!(feelings_c$participant %in% subjects_remove),] %>%
+                        cbind(metamemory_rec$MetaMemory, metamemory_rec$DA)
+
+names(feelings_rec_metamem_attn)[18] <- 'metamemory'
+names(feelings_rec_metamem_attn)[19] <- 'DA'
+
+ggscatter(feelings_rec_metamem_attn, x = 'metamemory', y ='feelingsScore', add = 'reg.line',
+          conf.int = TRUE, cor.coef = TRUE, cor.method = 'pearson', 
+          xlab = 'Recognition Metamemory', 
+          ylab =  'Feelings about memory',
+          title = 'Task-independent and task-dependent metamemory') 
+
+# facet by DA
+feelings_rec_metamem_DA <- subset(feelings_rec_metamem_attn, feelings_rec_metamem_attn$DA == 'DA')
+feelings_rec_metamem_FA <- subset(feelings_rec_metamem_attn, feelings_rec_metamem_attn$DA == 'FA')
+
+p1 <- ggscatter(feelings_rec_metamem_FA, x = 'metamemory', y = 'feelingsScore', add = 'reg.line',
+          conf.int = TRUE, cor.coef = TRUE, cor.method = 'pearson',
+          xlab = 'Recognition Metamemory', 
+          ylab = 'Feelings about memory',
+          title = 'Full attention') 
+
+p2 <- ggscatter(feelings_rec_metamem_DA, x = 'metamemory', y = 'feelingsScore', add = 'reg.line',
+          conf.int = TRUE, cor.coef = TRUE, cor.method = 'pearson', 
+          xlab = 'Recognition Metamemory', 
+          ylab = 'Feelings about memory',
+          title = 'Divided attention') 
+  
+ggarrange(p1,p2,ncol=2,nrow=1)
+```
+
+## MMQ & Recognition Metamemory (by stimulus type)
+```{r, fig.width=5,fig.height=3}
+## collapsing across stimulus type
+subjects_remove = c('15', '19', '22', '27','32', '33', '41','45', '46', '47','54', '56', '57')
+feelings_rec_metamem_pw <- feelings_c[!(feelings_c$participant %in% subjects_remove),] %>%
+                        cbind(metamemory_rec_pw$MetaMemory, metamemory_rec_pw$PictureWord)
+
+names(feelings_rec_metamem_pw)[18] <- 'metamemory'
+names(feelings_rec_metamem_pw)[19] <- 'StimulusType'
+
+
+ggscatter(feelings_rec_metamem_pw, x = 'metamemory', y ='feelingsScore', add = 'reg.line',
+          conf.int = TRUE, cor.coef = TRUE, cor.method = 'pearson', 
+          xlab = 'Recognition Metamemory', 
+          ylab =  'Feelings about memory',
+          title = 'Task-independent and task-dependent metamemory') 
+
+# facet by type
+feelings_rec_metamem_pic <- subset(feelings_rec_metamem_pw, feelings_rec_metamem_pw$StimulusType == 'Picture')
+feelings_rec_metamem_word <- subset(feelings_rec_metamem_pw, feelings_rec_metamem_pw$StimulusType == 'Word')
+
+p1 <- ggscatter(feelings_rec_metamem_pic, x = 'metamemory', y = 'feelingsScore', add = 'reg.line',
+          conf.int = TRUE, cor.coef = TRUE, cor.method = 'pearson',
+          xlab = 'Recognition Metamemory', 
+          ylab = 'Feelings about memory',
+          title = 'Pictures') 
+
+p2 <- ggscatter(feelings_rec_metamem_word, x = 'metamemory', y = 'feelingsScore', add = 'reg.line',
+          conf.int = TRUE, cor.coef = TRUE, cor.method = 'pearson', 
+          xlab = 'Recognition Metamemory', 
+          ylab = 'Feelings about memory',
+          title = 'Words') 
+  
+ggarrange(p1,p2,ncol=2,nrow=1)
+
+```
+***
+## MMQ & Source Metamemory (by attention)
+```{r, fig.width=5,fig.height=3}
+# collapsing across attn 
+subjects_remove = c('15', '19', '27', '32', '45', '46','53', '54')
+feelings_source_metamem_attn <- feelings_c[!(feelings_c$participant %in% subjects_remove),] %>%
+                        cbind(metamemory$MetaMemory, metamemory$DA)
+
+names(feelings_source_metamem_attn)[18] <- 'metamemory'
+names(feelings_source_metamem_attn)[19] <- 'DA'
+
+ggscatter(feelings_source_metamem_attn, x = 'metamemory', y ='feelingsScore', add = 'reg.line',
+          conf.int = TRUE, cor.coef = TRUE, cor.method = 'pearson', 
+          xlab = 'Source Metamemory', 
+          ylab =  'Feelings about memory',
+          title = 'Task-independent and task-dependent metamemory') 
+
+############ facet by DA #############
+feelings_source_metamem_DA <- subset(feelings_source_metamem_attn, feelings_source_metamem_attn$DA == 'DA')
+feelings_source_metamem_FA <- subset(feelings_source_metamem_attn, feelings_source_metamem_attn$DA == 'FA')
+
+p1 <- ggscatter(feelings_source_metamem_FA, x = 'metamemory', y = 'feelingsScore', add = 'reg.line',
+          conf.int = TRUE, cor.coef = TRUE, cor.method = 'pearson',
+          xlab = 'Source Metamemory', 
+          ylab = 'Feelings about memory',
+          title = 'Full attention') 
+
+p2 <- ggscatter(feelings_source_metamem_DA, x = 'metamemory', y = 'feelingsScore', add = 'reg.line',
+          conf.int = TRUE, cor.coef = TRUE, cor.method = 'pearson', 
+          xlab = 'Source Metamemory', 
+          ylab = 'Feelings about memory',
+          title = 'Divided attention') 
+  
+ggarrange(p1,p2,ncol=2,nrow=1)
+```
+
+
+```{r, fig.width=5,fig.height=3}
+
+## collapsing across type
+subjects_remove = c('14', '15', '19', '23', '27', '32', '33', '41','42','43','45', '46','47','53','54', '57')
+feelings_source_metamem_pw <- feelings_c[!(feelings_c$participant %in% subjects_remove),] %>%
+                         cbind(metamemory_pw$MetaMemory, metamemory_pw$PictureWord)
+
+names(feelings_source_metamem_pw)[18] <- 'metamemory'
+names(feelings_source_metamem_pw)[19] <- 'StimulusType'
+
+ggscatter(feelings_source_metamem_pw, x = 'metamemory', y ='feelingsScore', add = 'reg.line',
+          conf.int = TRUE, cor.coef = TRUE, cor.method = 'pearson', 
+          xlab = 'Source Metamemory', 
+          ylab =  'Feelings about memory',
+          title = 'Task-independent and task-dependent metamemory') 
+
+# facet by type
+feelings_source_metamem_pic <- subset(feelings_source_metamem_pw, feelings_source_metamem_pw$StimulusType == 'Picture')
+feelings_source_metamem_word <- subset(feelings_source_metamem_pw, feelings_source_metamem_pw$StimulusType == 'Word')
+
+p1 <- ggscatter(feelings_source_metamem_pic, x = 'metamemory', y = 'feelingsScore', add = 'reg.line',
+          conf.int = TRUE, cor.coef = TRUE, cor.method = 'pearson',
+          xlab = 'Source Metamemory', 
+          ylab = 'Feelings about memory',
+          title = 'Pictures') 
+
+p2 <- ggscatter(feelings_source_metamem_word, x = 'metamemory', y = 'feelingsScore', add = 'reg.line',
+          conf.int = TRUE, cor.coef = TRUE, cor.method = 'pearson', 
+          xlab = 'Source Metamemory', 
+          ylab = 'Feelings about memory',
+          title = 'Words') 
+  
+ggarrange(p1,p2,ncol=2,nrow=1)
+```
+***
+
+<!-- # OLD -->
+<!-- # Correlation between Recognition and Source Accuracy -->
+<!-- ```{r, fig.width=5,fig.height=3} -->
+<!-- rec_source_corr <- subset(allData, (is.na(OldNewAccuracy) == FALSE)) %>% -->
+<!--                             group_by(participant) %>% -->
+<!--                             summarise(PropRecCorrect = mean(OldNewAccuracy), PropSourceCorrect = mean(PictureWordAccuracy, na.rm = TRUE)) -->
+
+<!-- ## PEARSON CORRELATIONS -->
+<!-- ggscatter(rec_source_corr, x = 'PropRecCorrect', y = 'PropSourceCorrect', add = 'reg.line', -->
+<!--           conf.int = TRUE, cor.coef = TRUE, cor.method = 'pearson',  -->
+<!--           xlab = 'Recognition Accuracy (PropCorrect)', ylab = 'Source Accuracy (PropCorrect)', -->
+<!--           title = 'Recognition and Source Accuracy (pearson)') -->
+
+<!-- # Shapiro-Wilk normality test for Recognition -->
+<!-- shapiro.test(rec_source_corr$PropRecCorrect) # p = 0.006? -->
+
+<!-- # Shapiro-Wilk normality test for Source -->
+<!-- shapiro.test(rec_source_corr$PropSourceCorrect) # p = 0.1147 -->
+
+<!-- rec_source_test_p <- cor.test(rec_source_corr$PropRecCorrect, rec_source_corr$PropSourceCorrect, method = 'pearson') -->
+<!-- rec_source_test_p -->
+
+<!-- ``` -->
+<!-- *** -->
+<!-- # Correlation between Recognition and Source Accuracy by Attention -->
+<!-- ```{r} -->
+
+<!-- ## PEARSON CORRELATIONS -->
+<!-- ggscatter(rec_source_by_attn, x = 'PropRecCorrect', y = 'PropSourceCorrect', add = 'reg.line', -->
+<!--           conf.int = TRUE, cor.coef = TRUE, cor.method = 'pearson',  -->
+<!--           facet.by = 'DA', -->
+<!--           xlab = 'Recognition Accuracy (PropCorrect)', ylab = 'Source Accuracy (PropCorrect)', -->
+<!--           title = 'Recognition and Source Accuracy by Attention (pearson)')  -->
+
+<!-- # Shapiro-Wilk normality test for Recognition -->
+<!-- shapiro.test(rec_source_by_attn$PropRecCorrect) # p = 0.0002? -->
+
+<!-- # Shapiro-Wilk normality test for Source -->
+<!-- shapiro.test(rec_source_by_attn$PropSourceCorrect) # p = 0.005? -->
+
+<!-- rec_source_attn_test_p <- cor.test(rec_source_by_attn$PropRecCorrect, rec_source_by_attn$PropSourceCorrect, method = "pearson") -->
+<!-- rec_source_attn_test_p -->
+
+<!-- ``` -->
+<!-- *** -->
+<!-- ## Correlations: Post-Study Questionnaire -->
+<!-- ### Correlation between post-study confidence & MMQ feelings score -->
+<!-- ```{r} -->
+<!-- # load data  -->
+<!-- psq <- read.csv('/Users/maria/Desktop/psq.csv', stringsAsFactors=FALSE) -->
+
+<!-- # percent knowing there's a memory test -->
+<!-- i = 0 -->
+<!-- for (r in psq$Memtest.) { -->
+<!--   i = i + 1 -->
+<!--   if (r == 'Yes') { -->
+<!--     psq$Memtest.[i] <- 1 -->
+<!--   } -->
+<!--   else { -->
+<!--     psq$Memtest.[i] <- 0 -->
+<!--   } -->
+<!-- } -->
+
+<!-- psq$Memtest. <- as.numeric(psq$Memtest.) -->
+
+<!-- psq_corr <- select(psq, participant, DA_difficulty, rec_difficulty, source_difficulty, overall_confidence) %>%  -->
+<!--            cbind(rec_source_corr$PropRecCorrect, rec_source_corr$PropSourceCorrect, feelings$feelingsScore) -->
+
+<!-- colnames(psq_corr)[6] <- 'PropRecCorrect' -->
+<!-- colnames(psq_corr)[7] <- 'PropSourceCorrect' -->
+<!-- colnames(psq_corr)[8] <- 'feelingsScore' -->
+
+<!-- ggscatter(psq_corr, x = 'feelingsScore', y = 'overall_confidence', -->
+<!--           add = 'reg.line', -->
+<!--           conf.int = TRUE, cor.coef = TRUE, cor.method = 'pearson',  -->
+<!--           xlab = 'MMQ Feelings Score', -->
+<!--           ylab = 'Post-study overall confidence rating (low -> high)', -->
+<!--           title = 'Inter-questionnaire reliability') -->
+
+<!-- ``` -->
+<!-- *** -->
+<!-- ### Post-study confidence and recognition accuracy -->
+<!-- ```{r} -->
+<!-- ggscatter(psq_corr, x = 'PropRecCorrect', y =  'overall_confidence', add = 'reg.line', -->
+<!--           conf.int = TRUE, cor.coef = TRUE, cor.method = 'pearson',  -->
+<!--           xlab = 'Recognition Accuracy (PropCorrect)',  -->
+<!--           ylab =  'Post-Study Confidence', -->
+<!--           title = 'Post-Study Confidence & Recognition Accuracy (pearson)')  -->
+
+<!-- ``` -->
+<!-- *** -->
+<!-- ### Post-study confidence and source accuracy -->
+<!-- ```{r} -->
+<!-- ggscatter(psq_corr, x = 'PropSourceCorrect', y =  'overall_confidence', add = 'reg.line', -->
+<!--           conf.int = TRUE, cor.coef = TRUE, cor.method = 'pearson',  -->
+<!--           xlab = 'Source Accuracy (PropCorrect)',  -->
+<!--           ylab =  'Post-Study Confidence', -->
+<!--           title = 'Post-Study Confidence & Source Accuracy (pearson)')  -->
+<!-- ``` -->
+<!-- ### Post-Study Recognition Difficulty & Recognition Accuracy -->
+<!-- ```{r} -->
+
+<!-- ggscatter(psq_corr, x = 'PropRecCorrect', y =  'rec_difficulty', add = 'reg.line', -->
+<!--           conf.int = TRUE, cor.coef = TRUE, cor.method = 'pearson',  -->
+<!--           xlab = 'Recognition Accuracy (PropCorrect)',  -->
+<!--           ylab =  'Post-Study Recognition Difficulty', -->
+<!--           title = 'Post-Study Recognition Difficulty & Recognition Accuracy (pearson)')  -->
+
+<!-- # facet by attn -->
+<!-- psq_rec_attn <- rec_source_by_attn %>% -->
+<!--                 group_by(participant, DA) %>% -->
+<!--                 summarise(PropCorrect = mean(PropRecCorrect)) -->
+
+<!-- psq_attn <- psq[rep(1:nrow(psq), each=2),]  -->
+<!-- psq_rec_attn <- bind_cols(psq_rec_attn, psq_attn) -->
+
+<!-- psq_rec_attn_DA <- subset(psq_rec_attn, DA == 'DA') -->
+<!-- psq_rec_attn_FA <- subset(psq_rec_attn, DA == 'FA') -->
+
+<!-- p1 <- ggscatter(psq_rec_attn_FA, x = 'PropCorrect', y = 'rec_difficulty', add = 'reg.line', -->
+<!--           conf.int = TRUE, cor.coef = TRUE, cor.method = 'pearson', -->
+<!--           xlab = 'Recognition Accuracy (PropCorrect)',  -->
+<!--           ylab = 'Post-Study Recognition Difficulty', -->
+<!--           title = 'Full Attention')  -->
+
+<!-- p2 <- ggscatter(psq_rec_attn_DA, x = 'PropCorrect', y = 'rec_difficulty', add = 'reg.line', -->
+<!--           conf.int = TRUE, cor.coef = TRUE, cor.method = 'pearson',  -->
+<!--           xlab = 'Recognition Accuracy (PropCorrect)',  -->
+<!--           ylab = 'Post-Study Recognition Difficulty', -->
+<!--           title = 'Divided Attention')  -->
+
+<!-- ggarrange(p1,p2,ncol=2,nrow=1) -->
+
+<!-- ``` -->
+<!-- *** -->
+<!-- ### Post-Study Source Difficulty and Source Accuracy -->
+<!-- ```{r} -->
+
+<!-- ggscatter(psq_corr, x = 'PropSourceCorrect', y =  'source_difficulty', add = 'reg.line', -->
+<!--           conf.int = TRUE, cor.coef = TRUE, cor.method = 'pearson',  -->
+<!--           xlab = 'Source Accuracy (PropCorrect)',  -->
+<!--           ylab =  'Post-Study Source Difficulty', -->
+<!--           title = 'Post-Study Source Difficulty & Source Accuracy (pearson)')  -->
+
+<!-- # facet by attn -->
+<!-- psq_source_attn <- rec_source_by_attn %>% -->
+<!--                 group_by(participant, DA) %>% -->
+<!--                 summarise(PropCorrect = mean(PropSourceCorrect)) %>% -->
+<!--                 bind_cols(psq_attn) -->
+
+<!-- psq_source_attn_DA <- subset(psq_source_attn, DA == 'DA') -->
+<!-- psq_source_attn_FA <- subset(psq_source_attn, DA == 'FA') -->
+
+<!-- p1 <- ggscatter(psq_source_attn_FA, x = 'PropCorrect', y = 'source_difficulty', add = 'reg.line', -->
+<!--           conf.int = TRUE, cor.coef = TRUE, cor.method = 'pearson', -->
+<!--           xlab = 'Source Accuracy (PropCorrect)',  -->
+<!--           ylab = 'Post-Study Source Difficulty', -->
+<!--           title = 'Full Attention')  -->
+
+<!-- p2 <- ggscatter(psq_source_attn_DA, x = 'PropCorrect', y = 'source_difficulty', add = 'reg.line', -->
+<!--           conf.int = TRUE, cor.coef = TRUE, cor.method = 'pearson',  -->
+<!--           xlab = 'Source Accuracy (PropCorrect)',  -->
+<!--           ylab = 'Post-Study Source Difficulty', -->
+<!--           title = 'Divided Attention')  -->
+
+<!-- ggarrange(p1,p2,ncol=2,nrow=1) -->
+
+
+<!-- ``` -->
+<!-- *** -->
+
+<!-- #### Concurrent Task Difficulty & Recognition Accuracy -->
+<!-- ```{r} -->
+<!-- ggscatter(psq_corr, x = 'PropRecCorrect', y =  'DA_difficulty', add = 'reg.line', -->
+<!--           conf.int = TRUE, cor.coef = TRUE, cor.method = 'pearson',  -->
+<!--           xlab = 'Recognition Accuracy (PropCorrect)',  -->
+<!--           ylab =  'Concurrent Task Difficulty', -->
+<!--           title = 'Concurrent Task Difficulty & Recognition Accuracy (pearson)')  -->
+
+<!-- # facet by attn -->
+<!-- p1 <- ggscatter(psq_rec_attn_FA, x = 'PropCorrect', y = 'DA_difficulty', add = 'reg.line', -->
+<!--           conf.int = TRUE, cor.coef = TRUE, cor.method = 'pearson', -->
+<!--           xlab = 'Recognition Accuracy (PropCorrect)',  -->
+<!--           ylab = 'Concurrent task difficulty', -->
+<!--           title = 'Full Attention')  -->
+
+<!-- p2 <- ggscatter(psq_rec_attn_DA, x = 'PropCorrect', y = 'DA_difficulty', add = 'reg.line', -->
+<!--           conf.int = TRUE, cor.coef = TRUE, cor.method = 'pearson',  -->
+<!--           xlab = 'Recognition Accuracy (PropCorrect)',  -->
+<!--           ylab = 'Concurrent task difficulty', -->
+<!--           title = 'Divided Attention')  -->
+
+<!-- ggarrange(p1,p2,ncol=2,nrow=1) -->
+
+<!-- ``` -->
+<!-- *** -->
+
+<!-- ### Concurrent Task Difficulty & Source Accuracy -->
+<!-- ```{r} -->
+<!-- ggscatter(psq_corr, x = 'PropSourceCorrect', y =  'DA_difficulty', add = 'reg.line', -->
+<!--           conf.int = TRUE, cor.coef = TRUE, cor.method = 'pearson',  -->
+<!--           xlab = 'Source Accuracy (PropCorrect)',  -->
+<!--           ylab =  'Concurrent Task Difficulty', -->
+<!--           title = 'Concurrent Task Difficulty & Source Accuracy (pearson)')  -->
+
+<!-- # facet by attn -->
+<!-- p1 <- ggscatter(psq_source_attn_FA, x = 'PropCorrect', y = 'DA_difficulty', add = 'reg.line', -->
+<!--           conf.int = TRUE, cor.coef = TRUE, cor.method = 'pearson', -->
+<!--           xlab = 'Source Accuracy (PropCorrect)',  -->
+<!--           ylab = 'Concurrent Task Difficulty', -->
+<!--           title = 'Full Attention')  -->
+
+<!-- p2 <- ggscatter(psq_source_attn_DA, x = 'PropCorrect', y = 'DA_difficulty', add = 'reg.line', -->
+<!--           conf.int = TRUE, cor.coef = TRUE, cor.method = 'pearson',  -->
+<!--           xlab = 'Source Accuracy (PropCorrect)',  -->
+<!--           ylab = 'Concurrent Task Difficulty', -->
+<!--           title = 'Divided Attention')  -->
+
+<!-- ggarrange(p1,p2,ncol=2,nrow=1) -->
+
+<!-- ``` -->
+<!-- *** -->
+
+<!-- ### Post-Study Recognition Difficulty & Prop High Confidence Recognition Response -->
+<!-- ```{r} -->
+
+<!-- psq_conf_rec <- rec_conf %>% -->
+<!--                 group_by(participant) %>% -->
+<!--                 summarise(PropHigh = mean(PropHigh)) %>% -->
+<!--                 bind_cols(psq) -->
+
+<!-- ggscatter(psq_conf_rec, x = 'PropHigh', y =  'rec_difficulty', add = 'reg.line', -->
+<!--           conf.int = TRUE, cor.coef = TRUE, cor.method = 'pearson',  -->
+<!--           xlab = 'Proportion High Confidence Recognition Response',  -->
+<!--           ylab =  'Post-Study Recognition Difficulty', -->
+<!--           title = 'Post-Study Recognition Difficulty and Proportion High Confidence Recognition Response (pearson)')  -->
+
+<!-- # facet by DA -->
+<!-- psq_conf_rec_attn <- rec_conf %>% -->
+<!--                  group_by(participant, DA) %>% -->
+<!--                  summarise(PropHigh = mean(PropHigh)) %>% -->
+<!--                  bind_cols(psq_attn) -->
+
+<!-- psq_conf_rec_DA <- subset(psq_conf_rec_attn, DA == 'DA') -->
+<!-- psq_conf_rec_FA <- subset(psq_conf_rec_attn, DA == 'FA') -->
+
+<!-- p1 <- ggscatter(psq_conf_rec_FA, x = 'PropHigh', y = 'rec_difficulty', add = 'reg.line', -->
+<!--           conf.int = TRUE, cor.coef = TRUE, cor.method = 'pearson', -->
+<!--           xlab = 'Proportion High Confidence Recognition Response',  -->
+<!--           ylab = 'Post-Study Recognition Difficulty', -->
+<!--           title = 'Full attention')  -->
+
+<!-- p2 <- ggscatter(psq_conf_rec_DA, x = 'PropHigh', y = 'rec_difficulty', add = 'reg.line', -->
+<!--           conf.int = TRUE, cor.coef = TRUE, cor.method = 'pearson', -->
+<!--           xlab = 'Proportion High Confidence Recognition Response',  -->
+<!--           ylab = 'Post-Study Recognition Difficulty', -->
+<!--           title = 'Divided attention')  -->
+
+<!-- ggarrange(p1,p2,ncol=2,nrow=1) -->
+
+
+<!-- ``` -->
+<!-- *** -->
+
+<!-- ### Post-Study Source Difficulty & Prop High Confidence Source Response  -->
+<!-- ```{r} -->
+<!-- # all -->
+<!-- psq_source_conf <- source_conf %>% -->
+<!--                  group_by(participant) %>% -->
+<!--                  summarise(PropHigh = mean(PropHigh)) %>% -->
+<!--                  bind_cols(psq) -->
+
+<!-- ggscatter(psq_source_conf, x = 'PropHigh', y =  'source_difficulty', add = 'reg.line', -->
+<!--           conf.int = TRUE, cor.coef = TRUE, cor.method = 'pearson',  -->
+<!--           xlab = 'Proportion of High Confidence Source Responses',  -->
+<!--           ylab =  'Post-Study Source Difficulty', -->
+<!--           title = 'Post-Study Source Difficulty and Proportion High Confidence Source Response (pearson)')  -->
+
+<!-- # facet by DA -->
+<!-- psq_source_conf_attn <- source_conf %>% -->
+<!--                  group_by(participant, DA) %>% -->
+<!--                  summarise(PropHigh = mean(PropHigh)) %>% -->
+<!--                  bind_cols(psq_attn) -->
+
+<!-- psq_source_conf_DA <- subset(psq_source_conf_attn, DA == 'DA') -->
+<!-- psq_source_conf_FA <- subset(psq_source_conf_attn, DA == 'FA') -->
+
+<!-- p1 <- ggscatter(psq_source_conf_FA, x = 'PropHigh', y = 'source_difficulty', add = 'reg.line', -->
+<!--           conf.int = TRUE, cor.coef = TRUE, cor.method = 'pearson', -->
+<!--           xlab = 'Proportion of High Confidence Source Responses',  -->
+<!--           ylab =  'Post-Study Source Difficulty', -->
+<!--           title = 'Full attention')  -->
+
+<!-- p2 <- ggscatter(psq_source_conf_DA, x = 'PropHigh', y = 'source_difficulty', add = 'reg.line', -->
+<!--           conf.int = TRUE, cor.coef = TRUE, cor.method = 'pearson', -->
+<!--           xlab = 'Proportion of High Confidence Source Responses',  -->
+<!--           ylab =  'Post-Study Source Difficulty', -->
+<!--           title = 'Divided attention')  -->
+
+<!-- ggarrange(p1,p2,ncol=2,nrow=1) -->
+
+
+<!-- ``` -->
